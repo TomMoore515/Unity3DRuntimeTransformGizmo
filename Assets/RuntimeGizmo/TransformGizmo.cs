@@ -1,13 +1,13 @@
 using System;
 using UnityEngine;
+using UnityEngine.Events;
 using System.Collections.Generic;
 using System.Collections;
-using CommandUndoRedo;
 
 namespace RuntimeGizmos
 {
 	//To be safe, if you are changing any transforms hierarchy, such as parenting an object to something,
-	//you should call ClearTargets before doing so just to be sure nothing unexpected happens... as well as call UndoRedoManager.Clear()
+	//you should call ClearTargets before doing so just to be sure nothing unexpected happens...
 	//For example, if you select an object that has children, move the children elsewhere, deselect the original object, then try to add those old children to the selection, I think it wont work.
 
 	[RequireComponent(typeof(Camera))]
@@ -23,7 +23,7 @@ namespace RuntimeGizmos
 		public KeyCode SetMoveType = KeyCode.W;
 		public KeyCode SetRotateType = KeyCode.E;
 		public KeyCode SetScaleType = KeyCode.R;
-		//public KeyCode SetRectToolType = KeyCode.T;
+
 		public KeyCode SetAllTransformType = KeyCode.Y;
 		public KeyCode SetSpaceToggle = KeyCode.X;
 		public KeyCode SetPivotModeToggle = KeyCode.Z;
@@ -32,9 +32,6 @@ namespace RuntimeGizmos
 		public KeyCode translationSnapping = KeyCode.LeftControl;
 		public KeyCode AddSelection = KeyCode.LeftShift;
 		public KeyCode RemoveSelection = KeyCode.LeftControl;
-		public KeyCode ActionKey = KeyCode.LeftShift; //Its set to shift instead of control so that while in the editor we dont accidentally undo editor changes =/
-		public KeyCode UndoAction = KeyCode.Z;
-		public KeyCode RedoAction = KeyCode.Y;
 
 		public Color xColor = new Color(1, 0, 0, 0.8f);
 		public Color yColor = new Color(0, 1, 0, 0.8f);
@@ -43,10 +40,6 @@ namespace RuntimeGizmos
 		public Color selectedColor = new Color(1, 1, 0, 0.8f);
 		public Color hoverColor = new Color(1, .75f, 0, 0.8f);
 		public float planesOpacity = .5f;
-		//public Color rectPivotColor = new Color(0, 0, 1, 0.8f);
-		//public Color rectCornerColor = new Color(0, 0, 1, 0.8f);
-		//public Color rectAnchorColor = new Color(.7f, .7f, .7f, 0.8f);
-		//public Color rectLineColor = new Color(.7f, .7f, .7f, 0.8f);
 
 		public float movementSnap = .25f;
 		public float rotationSnap = 15f;
@@ -76,8 +69,6 @@ namespace RuntimeGizmos
 		//Mainly for if you want the pivot point to update correctly if selected objects are moving outside the transformgizmo.
 		//Might be poor on performance if lots of objects are selected...
 		public bool forceUpdatePivotPointOnChange = true;
-
-		public int maxUndoStored = 100;
 
 		public bool manuallyHandleGizmo;
 
@@ -126,7 +117,10 @@ namespace RuntimeGizmos
 		Coroutine forceUpdatePivotCoroutine;
 
 		static Material lineMaterial;
-		static Material outlineMaterial;
+		public Material outlineMaterial;
+		
+		public UnityEvent onSelect;
+        	public UnityEvent onDeselect;
 
 		void Awake()
 		{
@@ -153,14 +147,15 @@ namespace RuntimeGizmos
 
 		void Update()
 		{
-			HandleUndoRedo();
 
 			SetSpaceAndType();
 
 			if(manuallyHandleGizmo)
 			{
 				if(onCheckForSelectedAxis != null) onCheckForSelectedAxis();
-			}else{
+			}
+			else
+			{
 				SetNearAxis();
 			}
 			
@@ -181,7 +176,9 @@ namespace RuntimeGizmos
 			if(manuallyHandleGizmo)
 			{
 				if(onDrawCustomGizmo != null) onDrawCustomGizmo();
-			}else{
+			}
+			else
+			{
 				SetLines();
 			}
 		}
@@ -249,23 +246,6 @@ namespace RuntimeGizmos
 			return color;
 		}
 
-		void HandleUndoRedo()
-		{
-			if(maxUndoStored != UndoRedoManager.maxUndoStored) { UndoRedoManager.maxUndoStored = maxUndoStored; }
-
-			if(Input.GetKey(ActionKey))
-			{
-				if(Input.GetKeyDown(UndoAction))
-				{
-					UndoRedoManager.Undo();
-				}
-				else if(Input.GetKeyDown(RedoAction))
-				{
-					UndoRedoManager.Redo();
-				}
-			}
-		}
-
 		//We only support scaling in local space.
 		public TransformSpace GetProperTransformSpace()
 		{
@@ -305,12 +285,9 @@ namespace RuntimeGizmos
 
 		void SetSpaceAndType()
 		{
-			if(Input.GetKey(ActionKey)) return;
-
 			if(Input.GetKeyDown(SetMoveType)) transformType = TransformType.Move;
 			else if(Input.GetKeyDown(SetRotateType)) transformType = TransformType.Rotate;
 			else if(Input.GetKeyDown(SetScaleType)) transformType = TransformType.Scale;
-			//else if(Input.GetKeyDown(SetRectToolType)) type = TransformType.RectTool;
 			else if(Input.GetKeyDown(SetAllTransformType)) transformType = TransformType.All;
 
 			if(!isTransforming) translatingType = transformType;
@@ -377,12 +354,6 @@ namespace RuntimeGizmos
 			Vector3 currentSnapMovementAmount = Vector3.zero;
 			float currentSnapRotationAmount = 0;
 			float currentSnapScaleAmount = 0;
-
-			List<ICommand> transformCommands = new List<ICommand>();
-			for(int i = 0; i < targetRootsOrdered.Count; i++)
-			{
-				transformCommands.Add(new TransformCommand(this, targetRootsOrdered[i]));
-			}
 
 			while(!Input.GetMouseButtonUp(0))
 			{
@@ -474,7 +445,6 @@ namespace RuntimeGizmos
 							}
 						}
 
-						//WARNING - There is a bug in unity 5.4 and 5.5 that causes InverseTransformDirection to be affected by scale which will break negative scaling. Not tested, but updating to 5.4.2 should fix it - https://issuetracker.unity3d.com/issues/transformdirection-and-inversetransformdirection-operations-are-affected-by-scale
 						Vector3 localAxis = (GetProperTransformSpace() == TransformSpace.Local && nearAxis != Axis.Any) ? mainTargetRoot.InverseTransformDirection(axis) : axis;
 						
 						Vector3 targetScaleAmount = Vector3.one;
@@ -516,7 +486,9 @@ namespace RuntimeGizmos
 							Vector3 rotation = transform.TransformDirection(new Vector3(Input.GetAxis("Mouse Y"), -Input.GetAxis("Mouse X"), 0));
 							Quaternion.Euler(rotation).ToAngleAxis(out rotateAmount, out rotationAxis);
 							rotateAmount *= allRotateSpeedMultiplier;
-						}else{
+						}
+						else
+						{
 							if(circularRotationMethod)
 							{
 								float angle = Vector3.SignedAngle(previousMousePosition - originalPivot, mousePosition - originalPivot, axis);
@@ -564,14 +536,6 @@ namespace RuntimeGizmos
 
 				yield return null;
 			}
-
-			for(int i = 0; i < transformCommands.Count; i++)
-			{
-				((TransformCommand)transformCommands[i]).StoreNewTransformValues();
-			}
-			CommandGroup commandGroup = new CommandGroup();
-			commandGroup.Set(transformCommands);
-			UndoRedoManager.Insert(commandGroup);
 
 			totalRotationAmount = Quaternion.identity;
 			totalScaleAmount = 0;
@@ -669,12 +633,12 @@ namespace RuntimeGizmos
 				if(targetRoots.ContainsKey(target)) return;
 				if(children.Contains(target)) return;
 
-				if(addCommand) UndoRedoManager.Insert(new AddTargetCommand(this, target, targetRootsOrdered));
-
 				AddTargetRoot(target);
 				AddTargetHighlightedRenderers(target);
 
 				SetPivotPoint();
+							
+                		onSelect.Invoke();
 			}
 		}
 
@@ -684,18 +648,17 @@ namespace RuntimeGizmos
 			{
 				if(!targetRoots.ContainsKey(target)) return;
 
-				if(addCommand) UndoRedoManager.Insert(new RemoveTargetCommand(this, target));
-
 				RemoveTargetHighlightedRenderers(target);
 				RemoveTargetRoot(target);
 
 				SetPivotPoint();
+				
+				onDeselect.Invoke();
 			}
 		}
 
 		public void ClearTargets(bool addCommand = true)
 		{
-			if(addCommand) UndoRedoManager.Insert(new ClearTargetsCommand(this, targetRootsOrdered));
 
 			ClearAllHighlightedRenderers();
 			targetRoots.Clear();
@@ -705,7 +668,6 @@ namespace RuntimeGizmos
 
 		void ClearAndAddTarget(Transform target)
 		{
-			UndoRedoManager.Insert(new ClearAndAddTargetCommand(this, target, targetRootsOrdered));
 
 			ClearTargets(false);
 			AddTarget(target, false);
@@ -1067,26 +1029,6 @@ namespace RuntimeGizmos
 			return closestDistance;
 		}
 
-		//float DistanceFromMouseToPlane(List<Vector3> planeLines)
-		//{
-		//	if(planeLines.Count >= 4)
-		//	{
-		//		Ray mouseRay = myCamera.ScreenPointToRay(Input.mousePosition);
-		//		Plane plane = new Plane(planeLines[0], planeLines[1], planeLines[2]);
-
-		//		float distanceToPlane;
-		//		if(plane.Raycast(mouseRay, out distanceToPlane))
-		//		{
-		//			Vector3 pointOnPlane = mouseRay.origin + (mouseRay.direction * distanceToPlane);
-		//			Vector3 planeCenter = (planeLines[0] + planeLines[1] + planeLines[2] + planeLines[3]) / 4f;
-
-		//			return Vector3.Distance(planeCenter, pointOnPlane);
-		//		}
-		//	}
-
-		//	return float.MaxValue;
-		//}
-
 		void SetAxisInfo()
 		{
 			if(mainTargetRoot != null)
@@ -1418,6 +1360,9 @@ namespace RuntimeGizmos
 			if(lineMaterial == null)
 			{
 				lineMaterial = new Material(Shader.Find("Custom/Lines"));
+			}
+			if (outlineMaterial == null)
+			{
 				outlineMaterial = new Material(Shader.Find("Custom/Outline"));
 			}
 		}
